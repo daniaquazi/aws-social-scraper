@@ -7,32 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  lint-and-test:
-    name: Python lint + tests
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: |
-          pip install -r scraper/requirements.txt
-          pip install flake8 pytest moto boto3
-
-      - name: Lint with flake8
-        run: flake8 scraper/ finops/ --max-line-length=100 --ignore=E501
-
-      - name: Run tests
-        env:
-          AWS_DEFAULT_REGION: eu-west-2
-          AWS_ACCESS_KEY_ID: testing
-          AWS_SECRET_ACCESS_KEY: testing
-        run: pytest tests/ -v
+  # Python lint + tests — disabled until Phase 3 (scraper code not written yet)
+  # Will be re-enabled when handler.py, scraper.py and tests are added
 
   terraform-validate:
     name: Terraform validate
