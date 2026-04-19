@@ -1,1 +1,2 @@
-
+month,lambda_est,lambda_actual,sqs_est,sqs_actual,s3_est,s3_actual,cloudwatch_est,cloudwatch_actual,transfer_est,transfer_actual,total_est,total_actual,notes
+2024-01,0.20,,0.00,,0.12,,5.00,,10.00,,15.32,,Project launch month
