@@ -286,7 +286,7 @@ resource "aws_cloudwatch_metric_alarm" "rate_limit_alarm" {
 resource "aws_budgets_budget" "monthly" {
   name         = "${var.project_name}-monthly-budget"
   budget_type  = "COST"
-  limit_amount = "20"
+  limit_amount = "2"
   limit_unit   = "USD"
   time_unit    = "MONTHLY"
 
