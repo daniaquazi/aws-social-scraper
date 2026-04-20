@@ -1,74 +1,74 @@
 import json
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-SAMPLE_TOP_STORIES = [1001, 1002, 1003]
-
-SAMPLE_STORY = {
-    "id": 1001,
-    "type": "story",
-    "title": "GPT-5 released with major improvements",
-    "url": "https://example.com/gpt5",
-    "by": "techuser1",
-    "score": 500,
-    "descendants": 120,
-    "kids": [2001, 2002, 2003],
-    "time": 1700000000,
-    "text": ""
+SAMPLE_STORIES_RESPONSE = {
+    "hits": [
+        {
+            "objectID": "43001234",
+            "title": "GPT-5 released with major improvements",
+            "url": "https://example.com/gpt5",
+            "author": "techuser1",
+            "points": 500,
+            "num_comments": 120,
+            "created_at": "2026-04-20T10:00:00.000Z",
+            "story_text": ""
+        },
+        {
+            "objectID": "43001235",
+            "title": "Is AI going to replace programmers?",
+            "url": "https://example.com/ai-programmers",
+            "author": "devuser2",
+            "points": 300,
+            "num_comments": 80,
+            "created_at": "2026-04-20T09:00:00.000Z",
+            "story_text": ""
+        }
+    ]
 }
 
-SAMPLE_COMMENT_1 = {
-    "id": 2001,
-    "type": "comment",
-    "by": "commenter1",
-    "text": "This is a really interesting development in AI.",
-    "time": 1700000100,
-    "parent": 1001
-}
-
-SAMPLE_COMMENT_2 = {
-    "id": 2002,
-    "type": "comment",
-    "by": "commenter2",
-    "text": "",
-    "time": 1700000200,
-    "parent": 1001
-}
-
-SAMPLE_COMMENT_3 = {
-    "id": 2003,
-    "type": "comment",
-    "by": "commenter3",
-    "text": "I think the implications for software development are huge.",
-    "time": 1700000300,
-    "parent": 1001
+SAMPLE_COMMENTS_RESPONSE = {
+    "hits": [
+        {
+            "objectID": "c1",
+            "author": "commenter1",
+            "comment_text": "This is a really interesting development in AI.",
+            "created_at": "2026-04-20T10:05:00.000Z",
+            "parent_id": "43001234",
+            "story_id": "43001234"
+        },
+        {
+            "objectID": "c2",
+            "author": "commenter2",
+            "comment_text": "",
+            "created_at": "2026-04-20T10:06:00.000Z",
+            "parent_id": "43001234",
+            "story_id": "43001234"
+        },
+        {
+            "objectID": "c3",
+            "author": "commenter3",
+            "comment_text": "I think the implications for software development are huge.",
+            "created_at": "2026-04-20T10:07:00.000Z",
+            "parent_id": "43001234",
+            "story_id": "43001234"
+        }
+    ]
 }
 
 
 @patch("scraper._get_json")
 def test_get_top_stories(mock_get_json):
-    """Fetches and limits top story IDs."""
+    """Fetches and returns stories from Hacker News."""
     from scraper import get_top_stories
 
-    mock_get_json.return_value = SAMPLE_TOP_STORIES
+    mock_get_json.return_value = SAMPLE_STORIES_RESPONSE
     stories = get_top_stories(limit=2)
 
     assert len(stories) == 2
-    assert stories[0] == 1001
-
-
-@patch("scraper._get_json")
-def test_get_story(mock_get_json):
-    """Fetches and returns a story correctly."""
-    from scraper import get_story
-
-    mock_get_json.return_value = SAMPLE_STORY
-    story = get_story(1001)
-
-    assert story["id"] == 1001
-    assert story["title"] == "GPT-5 released with major improvements"
-    assert story["score"] == 500
-    assert story["comment_ids"] == [2001, 2002, 2003]
+    assert stories[0]["id"] == "43001234"
+    assert stories[0]["title"] == "GPT-5 released with major improvements"
+    assert stories[0]["score"] == 500
 
 
 @patch("scraper._random_delay")
@@ -77,12 +77,8 @@ def test_get_comments_filters_empty(mock_get_json, mock_delay):
     """Filters out comments with no text."""
     from scraper import get_comments
 
-    mock_get_json.side_effect = [
-        SAMPLE_COMMENT_1,
-        SAMPLE_COMMENT_2,
-        SAMPLE_COMMENT_3
-    ]
-    comments = get_comments([2001, 2002, 2003])
+    mock_get_json.return_value = SAMPLE_COMMENTS_RESPONSE
+    comments = get_comments("43001234", limit=10)
 
     assert len(comments) == 2
     texts = [c["text"] for c in comments]
@@ -94,14 +90,14 @@ def test_parse_story():
     from parser import parse_story
 
     raw = {
-        "id": 1001,
+        "id": "43001234",
         "title": "  AI News  ",
         "url": "https://example.com",
         "author": "user1",
         "score": 200,
         "num_comments": 50,
         "text": "",
-        "created_utc": 1700000000
+        "created_utc": "2026-04-20T10:00:00.000Z"
     }
     parsed = parse_story(raw)
 
@@ -115,11 +111,11 @@ def test_parse_comments_filters_short():
     from parser import parse_comments
 
     raw = [
-        {"id": 1, "author": "u1", "text": "ok", "created_utc": 1700000000},
-        {"id": 2, "author": "u2", "text": "This is a much longer and more useful comment.", "created_utc": 1700000001},
-        {"id": 3, "author": "u3", "text": "Great post with lots of detail here.", "created_utc": 1700000002},
+        {"id": "1", "author": "u1", "text": "ok", "created_utc": "2026-04-20T10:00:00.000Z"},
+        {"id": "2", "author": "u2", "text": "This is a much longer and more useful comment.", "created_utc": "2026-04-20T10:01:00.000Z"},
+        {"id": "3", "author": "u3", "text": "Great post with lots of detail here.", "created_utc": "2026-04-20T10:02:00.000Z"},
     ]
-    parsed = parse_comments(raw, 1001)
+    parsed = parse_comments(raw, "43001234")
 
     assert len(parsed) == 2
 
@@ -136,3 +132,15 @@ def test_clean_html():
     assert "&amp;" not in cleaned
     assert "bold" in cleaned
     assert "&" in cleaned
+
+
+def test_parse_comments_includes_word_count():
+    """Parser adds word count to each comment."""
+    from parser import parse_comments
+
+    raw = [
+        {"id": "1", "author": "u1", "text": "This has exactly five words here", "created_utc": "2026-04-20T10:00:00.000Z"}
+    ]
+    parsed = parse_comments(raw, "43001234")
+
+    assert parsed[0]["word_count"] == 6
