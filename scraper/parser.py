@@ -1,67 +1,72 @@
 import logging
+import re
 from datetime import datetime
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 
-def parse_posts(raw_posts, subreddit):
+def parse_story(raw_story):
     """
-    Clean and structure raw Reddit post data.
-    Returns a list of clean post dictionaries.
+    Clean and structure a raw Hacker News story.
     """
-    parsed = []
-
-    for post in raw_posts:
-        if not post.get("title"):
-            continue
-
-        parsed.append({
-            "id": post.get("id"),
-            "subreddit": subreddit,
-            "title": post.get("title", "").strip(),
-            "author": post.get("author", "[deleted]"),
-            "score": post.get("score", 0),
-            "upvote_ratio": post.get("upvote_ratio", 0),
-            "num_comments": post.get("num_comments", 0),
-            "permalink": post.get("permalink"),
-            "body": post.get("selftext", "").strip()[:500] or None,
-            "created_utc": post.get("created_utc"),
-            "parsed_at": datetime.utcnow().isoformat(),
-        })
-
-    logger.info("Parsed %d posts from r/%s", len(parsed), subreddit)
-    return parsed
+    return {
+        "id": raw_story.get("id"),
+        "title": raw_story.get("title", "").strip(),
+        "url": raw_story.get("url"),
+        "author": raw_story.get("author"),
+        "score": raw_story.get("score", 0),
+        "num_comments": raw_story.get("num_comments", 0),
+        "text": _clean_html(raw_story.get("text", "")),
+        "created_utc": raw_story.get("created_utc"),
+        "parsed_at": datetime.utcnow().isoformat(),
+        "source": "hackernews"
+    }
 
 
-def parse_comments(raw_comments, subreddit, post_id):
+def parse_comments(raw_comments, story_id):
     """
-    Clean and structure raw Reddit comment data.
-    Filters out deleted/empty comments.
-    Returns a list of clean comment dictionaries.
+    Clean and structure raw Hacker News comments.
+    Filters out empty or very short comments.
     """
     parsed = []
 
     for comment in raw_comments:
-        body = comment.get("body", "").strip()
+        text = _clean_html(comment.get("text", "")).strip()
 
-        if not body or body in ("[deleted]", "[removed]"):
-            continue
-
-        if len(body) < 5:
+        if not text or len(text) < 10:
             continue
 
         parsed.append({
             "id": comment.get("id"),
-            "post_id": post_id,
-            "subreddit": subreddit,
-            "author": comment.get("author", "[deleted]"),
-            "body": body[:1000],
-            "score": comment.get("score", 0),
+            "story_id": story_id,
+            "author": comment.get("author"),
+            "text": text[:1000],
+            "word_count": len(text.split()),
             "created_utc": comment.get("created_utc"),
             "parsed_at": datetime.utcnow().isoformat(),
-            "word_count": len(body.split())
+            "source": "hackernews"
         })
 
-    logger.info("Parsed %d comments for post %s", len(parsed), post_id)
+    logger.info("Parsed %d comments for story %s", len(parsed), story_id)
     return parsed
+
+
+def _clean_html(text):
+    """
+    Remove HTML tags from Hacker News comment text.
+    HN comments contain basic HTML like <p>, <a>, <i>.
+    """
+    if not text:
+        return ""
+
+    text = re.sub(r"<a[^>]*>(.*?)</a>", r"\1", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = text.replace("&#x27;", "'")
+    text = text.replace("&quot;", '"')
+    text = text.replace("&amp;", "&")
+    text = text.replace("&gt;", ">")
+    text = text.replace("&lt;", "<")
+    text = " ".join(text.split())
+
+    return text.strip()
