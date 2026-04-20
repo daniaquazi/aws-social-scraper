@@ -160,8 +160,8 @@ resource "aws_lambda_function" "scraper" {
   role             = aws_iam_role.lambda_role.arn
   handler          = "handler.lambda_handler"
   runtime          = "python3.11"
-  filename         = data.archive_file.lambda_zip.output_path
-  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+  filename         = "${path.module}/lambda_package.zip"
+  source_code_hash = filebase64sha256("${path.module}/lambda_package.zip")
   timeout          = 300
   memory_size      = 256
 
