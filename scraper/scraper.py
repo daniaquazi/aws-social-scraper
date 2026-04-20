@@ -7,113 +7,113 @@ import requests
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+BASE_URL = "https://hacker-news.firebaseio.com/v1"
+
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    "User-Agent": "aws-social-scraper/1.0"
 }
 
 MAX_RETRIES = 5
 BASE_DELAY = 2
-
-SUBREDDITS = [
-    "artificial",
-    "ChatGPT",
-]
-
-
-class RateLimitError(Exception):
-    pass
 
 
 class ScrapeError(Exception):
     pass
 
 
-def get_subreddit_posts(subreddit, limit=25, sort="hot"):
+def get_top_stories(limit=10):
     """
-    Fetch posts from a subreddit using Reddit's public JSON API.
-    Returns a list of post dictionaries.
+    Fetch top story IDs from Hacker News.
+    Returns a list of story IDs.
     """
-    url = f"https://www.reddit.com/r/{subreddit}/{sort}.json?limit={limit}"
-    logger.info("Fetching posts from r/%s", subreddit)
+    url = f"{BASE_URL}/topstories.json"
+    logger.info("Fetching top story IDs from Hacker News")
 
     data = _get_json(url)
-    posts = data.get("data", {}).get("children", [])
+    story_ids = data[:limit]
 
-    results = []
-    for post in posts:
-        p = post.get("data", {})
-        results.append({
-            "id": p.get("id"),
-            "title": p.get("title"),
-            "author": p.get("author"),
-            "score": p.get("score"),
-            "upvote_ratio": p.get("upvote_ratio"),
-            "num_comments": p.get("num_comments"),
-            "url": p.get("url"),
-            "permalink": f"https://www.reddit.com{p.get('permalink', '')}",
-            "created_utc": p.get("created_utc"),
-            "selftext": p.get("selftext", "")[:500],
-            "subreddit": subreddit
+    logger.info("Got %d story IDs", len(story_ids))
+    return story_ids
+
+
+def get_story(story_id):
+    """
+    Fetch a single story by ID.
+    Returns story dictionary or None.
+    """
+    url = f"{BASE_URL}/item/{story_id}.json"
+    data = _get_json(url)
+
+    if not data or data.get("type") != "story":
+        return None
+
+    return {
+        "id": data.get("id"),
+        "title": data.get("title"),
+        "url": data.get("url"),
+        "author": data.get("by"),
+        "score": data.get("score", 0),
+        "num_comments": data.get("descendants", 0),
+        "comment_ids": data.get("kids", []),
+        "created_utc": data.get("time"),
+        "text": data.get("text", "")
+    }
+
+
+def get_comments(comment_ids, limit=20):
+    """
+    Fetch comments for a story.
+    Returns list of comment dictionaries.
+    """
+    comments = []
+
+    for comment_id in comment_ids[:limit]:
+        url = f"{BASE_URL}/item/{comment_id}.json"
+        data = _get_json(url)
+
+        if not data:
+            continue
+
+        text = data.get("text", "")
+        if not text or data.get("deleted") or data.get("dead"):
+            continue
+
+        comments.append({
+            "id": data.get("id"),
+            "author": data.get("by"),
+            "text": text[:1000],
+            "created_utc": data.get("time"),
+            "parent_id": data.get("parent")
         })
 
-    logger.info("Fetched %d posts from r/%s", len(results), subreddit)
-    return results
+        _random_delay()
 
-
-def get_post_comments(subreddit, post_id, limit=50):
-    """
-    Fetch comments for a specific Reddit post.
-    Returns a list of comment dictionaries.
-    """
-    url = f"https://www.reddit.com/r/{subreddit}/comments/{post_id}.json?limit={limit}"
-    logger.info("Fetching comments for post %s", post_id)
-
-    data = _get_json(url)
-
-    comments = []
-    if len(data) > 1:
-        comment_data = data[1].get("data", {}).get("children", [])
-        for comment in comment_data:
-            c = comment.get("data", {})
-            if c.get("body") and c.get("body") != "[deleted]":
-                comments.append({
-                    "id": c.get("id"),
-                    "author": c.get("author"),
-                    "body": c.get("body", "")[:1000],
-                    "score": c.get("score"),
-                    "created_utc": c.get("created_utc"),
-                    "post_id": post_id,
-                    "subreddit": subreddit
-                })
-
-    logger.info("Fetched %d comments for post %s", len(comments), post_id)
+    logger.info("Fetched %d comments", len(comments))
     return comments
 
 
 def _get_json(url):
     """
-    Make a GET request with exponential backoff and jitter.
-    Returns parsed JSON response.
+    Make a GET request with exponential backoff.
+    Returns parsed JSON.
     """
     for attempt in range(MAX_RETRIES):
         try:
             response = requests.get(url, headers=HEADERS, timeout=30)
 
             if response.status_code == 429:
-                log_rate_limit(url)
-                wait = _get_retry_after(response) or _backoff(attempt)
+                wait = _backoff(attempt)
                 logger.warning("Rate limited — waiting %ds", wait)
                 time.sleep(wait)
                 continue
 
             if response.status_code >= 500:
                 wait = _backoff(attempt)
-                logger.warning("Server error %d — waiting %ds", response.status_code, wait)
+                logger.warning("Server error — waiting %ds", wait)
                 time.sleep(wait)
                 continue
 
             response.raise_for_status()
-            _random_delay()
             return response.json()
 
         except requests.exceptions.Timeout:
@@ -129,24 +129,13 @@ def _backoff(attempt):
     return (BASE_DELAY ** attempt) + random.uniform(0, 1)
 
 
-def _get_retry_after(response):
-    """Read Retry-After header if present."""
-    retry_after = response.headers.get("Retry-After")
-    if retry_after:
-        try:
-            return int(retry_after)
-        except ValueError:
-            return None
-    return None
-
-
 def _random_delay():
-    """Add a random human-like delay between requests."""
-    time.sleep(random.uniform(1, 3))
+    """Add a small delay between requests."""
+    time.sleep(random.uniform(0.5, 1.5))
 
 
 def log_rate_limit(url):
-    """Send a rate limit hit metric to CloudWatch."""
+    """Send rate limit metric to CloudWatch."""
     try:
         cloudwatch = boto3.client("cloudwatch", region_name="eu-west-2")
         cloudwatch.put_metric_data(
