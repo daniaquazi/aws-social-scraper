@@ -89,15 +89,17 @@ aws-social-scraper/
 EC2 and Fargate run continuously — even when idle. For a scraper that runs once per hour, this wastes ~23 hours of compute per day. Lambda charges only per invocation (200ms average) making it ~99% cheaper for this workload.
 
 **Single S3 bucket over multiple storage layers:**
-The original design used both S3 and DynamoDB. DynamoDB adds ~$1.25/million reads with no benefit for append-only scrape data. S3 alone handles both raw and processed data with a simple prefix structure.
+The original design used both S3 and DynamoDB. DynamoDB adds cost with no benefit for append-only scrape data. S3 alone handles both raw and processed data with a simple prefix structure.
 
 **Lifecycle rules on raw data:**
-Raw HTML/JSON is only needed for reprocessing. A 30-day lifecycle rule on the `raw/` prefix automatically deletes old files, keeping storage costs near zero.
+Raw JSON is only needed for reprocessing. A 30-day lifecycle rule on the `raw/` prefix automatically deletes old files, keeping storage costs near zero.
 
 **SQS as rate limiter:**
 Instead of complex throttling code, SQS naturally limits concurrency. Combined with Lambda's batch size of 1, this prevents hammering the API and avoids rate limit costs.
 
-### Estimated vs actual costs
+### Pre-deployment cost estimate
+
+> Actual costs will be tracked in [`finops/monthly-log.csv`](./finops/monthly-log.csv) once the pipeline has been running for a full month. The figures below are pre-deployment estimates based on AWS pricing documentation.
 
 | Service | Reason | Estimated/mo |
 |---|---|---|
@@ -105,15 +107,9 @@ Instead of complex throttling code, SQS naturally limits concurrency. Combined w
 | SQS | ~720 messages/month | ~$0.00 (free tier) |
 | S3 | ~1GB stored, lifecycle managed | ~$0.02 |
 | EventBridge | Scheduled rules | ~$0.00 (free tier) |
-| CloudWatch | Logs + dashboard + alarm | ~$3–5 |
+| CloudWatch | Logs + alarm | ~$3–5 |
 | Data transfer | Outbound API calls | ~$1–3 |
 | **Total** | | **~$4–8/mo** |
-
-Actual costs tracked monthly in [`finops/monthly-log.csv`](./finops/monthly-log.csv) and pulled via the AWS Cost Explorer API:
-
-```bash
-python finops/cost_report.py
-```
 
 All resources are tagged for cost attribution:
 
