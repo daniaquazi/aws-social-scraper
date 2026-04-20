@@ -171,8 +171,6 @@ resource "aws_lambda_function" "scraper" {
   timeout          = 300
   memory_size      = 256
 
-  reserved_concurrent_executions = -1
-
   environment {
     variables = {
       S3_BUCKET   = aws_s3_bucket.scraper_data.bucket
