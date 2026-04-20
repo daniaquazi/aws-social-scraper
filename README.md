@@ -1,36 +1,56 @@
-# AWS Social Media Scraper — FinOps Project
+# AWS Social Scraper — FinOps Project
 
-A serverless AWS pipeline that scrapes social media comments and profiles, built with cost efficiency as a first-class concern.
+A serverless AWS pipeline that scrapes Hacker News tech discussions and stores structured data in S3, built with cost efficiency as a first-class concern.
 
-> **Status: In progress** — infrastructure and scraper code are being built out iteratively.
-
----
-
-## Goal
-
-Build a low-cost, production-style scraping pipeline on AWS while tracking and optimising cloud spend (FinOps). Target: keep monthly AWS costs under $30.
+![CI](https://github.com/daniaquazi/aws-social-scraper/actions/workflows/ci.yml/badge.svg)
 
 ---
 
-## Planned architecture
+## What it does
+
+Scrapes the top stories and comments from Hacker News (via the Algolia API) every hour, cleans and structures the data, and stores it in Amazon S3 — all automatically, serverlessly, and at minimal cost.
+
+- Fetches top AI and tech stories + comments
+- Cleans HTML, filters deleted/short comments, adds word counts
+- Stores raw and processed JSON in S3 with date-partitioned paths
+- Monitors for rate limiting via CloudWatch alarms
+- Tracks actual vs estimated costs monthly in `finops/monthly-log.csv`
+
+---
+
+## Architecture
 
 ```
-EventBridge (cron)
+EventBridge Scheduler (hourly cron)
       │
       ▼
-Amazon SQS (task queue)
+Amazon SQS (task queue + dead letter queue)
       │
       ▼
-AWS Lambda (scraper workers) ──► Target websites
+AWS Lambda (Python 3.11 scraper)  ──►  Hacker News Algolia API
       │
-      ├──► S3 /raw        (raw HTML / JSON)
-      │         │
-      │         ▼
-      └──► S3 /processed  (clean structured JSON)
+      ├──► S3 /raw/hackernews/        (raw JSON)
+      │
+      └──► S3 /processed/hackernews/  (cleaned, structured JSON)
 
-CloudWatch  ◄──── metrics, logs, cost alarms
+CloudWatch  ◄──── Lambda logs, metrics, rate limit alarms
 GitHub Actions ──► CI: lint, test, terraform validate
 ```
+
+---
+
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| Scheduler | Amazon EventBridge |
+| Queue | Amazon SQS + DLQ |
+| Compute | AWS Lambda (Python 3.11) |
+| Storage | Amazon S3 (lifecycle rules on raw/) |
+| Monitoring | Amazon CloudWatch |
+| IaC | Terraform |
+| CI/CD | GitHub Actions |
+| Data source | Hacker News via Algolia API |
 
 ---
 
@@ -38,12 +58,21 @@ GitHub Actions ──► CI: lint, test, terraform validate
 
 ```
 aws-social-scraper/
-├── infrastructure/       # Terraform — coming soon
+├── infrastructure/
+│   ├── main.tf           # All AWS resources
+│   ├── variables.tf      # Region, env, project name
+│   └── outputs.tf        # Queue URL, bucket names
 ├── scraper/
-│   └── requirements.txt  # Python dependencies
-├── tests/                # coming soon
+│   ├── handler.py        # Lambda entry point
+│   ├── scraper.py        # Algolia API + backoff logic
+│   ├── parser.py         # HTML cleaning, data structuring
+│   └── requirements.txt
+├── tests/
+│   ├── conftest.py       # pytest path config
+│   └── test_handler.py   # Unit tests with mocks
 ├── finops/
-│   └── monthly-log.csv   # Estimated vs actual AWS costs
+│   ├── cost_report.py    # AWS Cost Explorer API script
+│   └── monthly-log.csv   # Estimated vs actual costs
 ├── .github/
 │   └── workflows/
 │       └── ci.yml        # Lint, test, tf validate on push
@@ -52,18 +81,58 @@ aws-social-scraper/
 
 ---
 
-## FinOps tracking
+## FinOps cost analysis
 
-Monthly costs are logged in [`finops/monthly-log.csv`](./finops/monthly-log.csv) comparing estimated vs actual AWS spend, broken down by service.
+### Architecture decisions driven by cost
 
-| Service | Estimated monthly |
-|---|---|
-| Lambda | ~$0.20 |
-| SQS | ~$0.00 (free tier) |
-| S3 | ~$0.12 |
-| CloudWatch | ~$3–8 |
-| Data transfer | ~$5–15 |
-| **Total** | **~$10–25/mo** |
+**Lambda over EC2/ECS Fargate:**
+EC2 and Fargate run continuously — even when idle. For a scraper that runs once per hour, this wastes ~23 hours of compute per day. Lambda charges only per invocation (200ms average) making it ~99% cheaper for this workload.
+
+**Single S3 bucket over multiple storage layers:**
+The original design used both S3 and DynamoDB. DynamoDB adds ~$1.25/million reads with no benefit for append-only scrape data. S3 alone handles both raw and processed data with a simple prefix structure.
+
+**Lifecycle rules on raw data:**
+Raw HTML/JSON is only needed for reprocessing. A 30-day lifecycle rule on the `raw/` prefix automatically deletes old files, keeping storage costs near zero.
+
+**SQS as rate limiter:**
+Instead of complex throttling code, SQS naturally limits concurrency. Combined with Lambda's batch size of 1, this prevents hammering the API and avoids rate limit costs.
+
+### Estimated vs actual costs
+
+| Service | Reason | Estimated/mo |
+|---|---|---|
+| Lambda | ~720 invocations/month (hourly) | ~$0.00 (free tier) |
+| SQS | ~720 messages/month | ~$0.00 (free tier) |
+| S3 | ~1GB stored, lifecycle managed | ~$0.02 |
+| EventBridge | Scheduled rules | ~$0.00 (free tier) |
+| CloudWatch | Logs + dashboard + alarm | ~$3–5 |
+| Data transfer | Outbound API calls | ~$1–3 |
+| **Total** | | **~$4–8/mo** |
+
+Actual costs tracked monthly in [`finops/monthly-log.csv`](./finops/monthly-log.csv) and pulled via the AWS Cost Explorer API:
+
+```bash
+python finops/cost_report.py
+```
+
+All resources are tagged for cost attribution:
+
+```
+Project     = aws-social-scraper
+Environment = prod
+Owner       = dania
+```
+
+A AWS Budget alert triggers at 80% of $2/month — ensuring no surprise charges.
+
+---
+
+## Rate limiting strategy
+
+- Exponential backoff with jitter on 429/503 responses
+- Random human-like delays between requests (0.5–1.5s)
+- SQS visibility timeout as automatic retry on failure
+- CloudWatch alarm if `RateLimitHit > 10` in a 5-minute window
 
 ---
 
@@ -71,14 +140,31 @@ Monthly costs are logged in [`finops/monthly-log.csv`](./finops/monthly-log.csv)
 
 GitHub Actions runs on every push to `main`:
 - Python lint (flake8)
-- pytest (with moto for AWS mocks)
+- pytest unit tests with mocked AWS and API calls
 - Terraform validate + format check
+
+---
+
+## Deployment
+
+```bash
+cd infrastructure
+terraform init
+terraform plan
+terraform apply
+```
+
+Tear down:
+```bash
+aws s3 rm s3://aws-social-scraper-data-prod --recursive
+terraform destroy
+```
 
 ---
 
 ## Disclaimer
 
-Always check a site's `robots.txt` and Terms of Service before scraping. This project is for personal learning and low-volume use only.
+This project uses the public Hacker News Algolia API which is free and openly available. Always check a site's terms of service before scraping.
 
 ---
 
