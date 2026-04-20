@@ -2,156 +2,137 @@ import json
 import pytest
 from unittest.mock import patch, MagicMock
 
+SAMPLE_TOP_STORIES = [1001, 1002, 1003]
 
-SAMPLE_POSTS_RESPONSE = {
-    "data": {
-        "children": [
-            {
-                "data": {
-                    "id": "abc123",
-                    "title": "GPT-4 just blew my mind with this response",
-                    "author": "techuser1",
-                    "score": 1500,
-                    "upvote_ratio": 0.95,
-                    "num_comments": 342,
-                    "url": "https://reddit.com/r/artificial/abc123",
-                    "permalink": "/r/artificial/comments/abc123/gpt4_just_blew/",
-                    "created_utc": 1700000000,
-                    "selftext": "I asked it to explain quantum computing..."
-                }
-            },
-            {
-                "data": {
-                    "id": "def456",
-                    "title": "Is AI going to replace programmers?",
-                    "author": "devuser2",
-                    "score": 980,
-                    "upvote_ratio": 0.88,
-                    "num_comments": 210,
-                    "url": "https://reddit.com/r/artificial/def456",
-                    "permalink": "/r/artificial/comments/def456/ai_replace/",
-                    "created_utc": 1700001000,
-                    "selftext": ""
-                }
-            }
-        ]
-    }
+SAMPLE_STORY = {
+    "id": 1001,
+    "type": "story",
+    "title": "GPT-5 released with major improvements",
+    "url": "https://example.com/gpt5",
+    "by": "techuser1",
+    "score": 500,
+    "descendants": 120,
+    "kids": [2001, 2002, 2003],
+    "time": 1700000000,
+    "text": ""
 }
 
-SAMPLE_COMMENTS_RESPONSE = [
-    {"data": {"children": []}},
-    {
-        "data": {
-            "children": [
-                {
-                    "data": {
-                        "id": "c1",
-                        "author": "commenter1",
-                        "body": "This is genuinely impressive, I tried it myself.",
-                        "score": 200,
-                        "created_utc": 1700000100
-                    }
-                },
-                {
-                    "data": {
-                        "id": "c2",
-                        "author": "commenter2",
-                        "body": "[deleted]",
-                        "score": 0,
-                        "created_utc": 1700000200
-                    }
-                },
-                {
-                    "data": {
-                        "id": "c3",
-                        "author": "commenter3",
-                        "body": "AI still has a long way to go before replacing anyone.",
-                        "score": 150,
-                        "created_utc": 1700000300
-                    }
-                }
-            ]
-        }
-    }
-]
+SAMPLE_COMMENT_1 = {
+    "id": 2001,
+    "type": "comment",
+    "by": "commenter1",
+    "text": "This is a really interesting development in AI.",
+    "time": 1700000100,
+    "parent": 1001
+}
+
+SAMPLE_COMMENT_2 = {
+    "id": 2002,
+    "type": "comment",
+    "by": "commenter2",
+    "text": "",
+    "time": 1700000200,
+    "parent": 1001
+}
+
+SAMPLE_COMMENT_3 = {
+    "id": 2003,
+    "type": "comment",
+    "by": "commenter3",
+    "text": "I think the implications for software development are huge.",
+    "time": 1700000300,
+    "parent": 1001
+}
 
 
 @patch("scraper._get_json")
-def test_get_subreddit_posts(mock_get_json):
-    """Fetches and returns posts from a subreddit."""
-    from scraper import get_subreddit_posts
+def test_get_top_stories(mock_get_json):
+    """Fetches and limits top story IDs."""
+    from scraper import get_top_stories
 
-    mock_get_json.return_value = SAMPLE_POSTS_RESPONSE
-    posts = get_subreddit_posts("artificial", limit=2)
+    mock_get_json.return_value = SAMPLE_TOP_STORIES
+    stories = get_top_stories(limit=2)
 
-    assert len(posts) == 2
-    assert posts[0]["id"] == "abc123"
-    assert posts[0]["title"] == "GPT-4 just blew my mind with this response"
-    assert posts[0]["subreddit"] == "artificial"
+    assert len(stories) == 2
+    assert stories[0] == 1001
 
 
 @patch("scraper._get_json")
-def test_get_post_comments_filters_deleted(mock_get_json):
-    """Filters out deleted comments from results."""
-    from scraper import get_post_comments
+def test_get_story(mock_get_json):
+    """Fetches and returns a story correctly."""
+    from scraper import get_story
 
-    mock_get_json.return_value = SAMPLE_COMMENTS_RESPONSE
-    comments = get_post_comments("artificial", "abc123")
+    mock_get_json.return_value = SAMPLE_STORY
+    story = get_story(1001)
+
+    assert story["id"] == 1001
+    assert story["title"] == "GPT-5 released with major improvements"
+    assert story["score"] == 500
+    assert story["comment_ids"] == [2001, 2002, 2003]
+
+
+@patch("scraper._random_delay")
+@patch("scraper._get_json")
+def test_get_comments_filters_empty(mock_get_json, mock_delay):
+    """Filters out comments with no text."""
+    from scraper import get_comments
+
+    mock_get_json.side_effect = [
+        SAMPLE_COMMENT_1,
+        SAMPLE_COMMENT_2,
+        SAMPLE_COMMENT_3
+    ]
+    comments = get_comments([2001, 2002, 2003])
 
     assert len(comments) == 2
-    bodies = [c["body"] for c in comments]
-    assert "[deleted]" not in bodies
+    texts = [c["text"] for c in comments]
+    assert "" not in texts
 
 
-def test_parse_posts():
-    """Parser structures posts correctly."""
-    from parser import parse_posts
+def test_parse_story():
+    """Parser structures story correctly."""
+    from parser import parse_story
 
-    raw = [
-        {
-            "id": "abc123",
-            "title": "  GPT-4 test  ",
-            "author": "user1",
-            "score": 500,
-            "upvote_ratio": 0.9,
-            "num_comments": 100,
-            "permalink": "/r/artificial/abc123",
-            "selftext": "some body text",
-            "created_utc": 1700000000
-        }
-    ]
-    parsed = parse_posts(raw, "artificial")
+    raw = {
+        "id": 1001,
+        "title": "  AI News  ",
+        "url": "https://example.com",
+        "author": "user1",
+        "score": 200,
+        "num_comments": 50,
+        "text": "",
+        "created_utc": 1700000000
+    }
+    parsed = parse_story(raw)
 
-    assert len(parsed) == 1
-    assert parsed[0]["title"] == "GPT-4 test"
-    assert parsed[0]["subreddit"] == "artificial"
-    assert parsed[0]["score"] == 500
+    assert parsed["title"] == "AI News"
+    assert parsed["score"] == 200
+    assert parsed["source"] == "hackernews"
 
 
-def test_parse_comments_filters_short_and_deleted():
-    """Parser removes deleted and very short comments."""
+def test_parse_comments_filters_short():
+    """Parser removes comments that are too short."""
     from parser import parse_comments
 
     raw = [
-        {"id": "c1", "author": "u1", "body": "Great post!", "score": 10, "created_utc": 1700000000},
-        {"id": "c2", "author": "u2", "body": "[deleted]", "score": 0, "created_utc": 1700000001},
-        {"id": "c3", "author": "u3", "body": "ok", "score": 1, "created_utc": 1700000002},
-        {"id": "c4", "author": "u4", "body": "Really interesting take on AI safety.", "score": 50, "created_utc": 1700000003},
+        {"id": 1, "author": "u1", "text": "ok", "created_utc": 1700000000},
+        {"id": 2, "author": "u2", "text": "This is a much longer and more useful comment.", "created_utc": 1700000001},
+        {"id": 3, "author": "u3", "text": "Great post with lots of detail here.", "created_utc": 1700000002},
     ]
-    parsed = parse_comments(raw, "artificial", "abc123")
+    parsed = parse_comments(raw, 1001)
 
     assert len(parsed) == 2
-    assert all(c["body"] not in ("[deleted]", "[removed]") for c in parsed)
-    assert all(len(c["body"]) >= 5 for c in parsed)
 
 
-def test_parse_comments_includes_word_count():
-    """Parser adds word count to each comment."""
-    from parser import parse_comments
+def test_clean_html():
+    """HTML cleaner strips tags and decodes entities."""
+    from parser import _clean_html
 
-    raw = [
-        {"id": "c1", "author": "u1", "body": "This has five words here", "score": 5, "created_utc": 1700000000}
-    ]
-    parsed = parse_comments(raw, "artificial", "abc123")
+    html = "<p>This is <b>bold</b> and has &amp; entity &gt; here</p>"
+    cleaned = _clean_html(html)
 
-    assert parsed[0]["word_count"] == 5
+    assert "<p>" not in cleaned
+    assert "<b>" not in cleaned
+    assert "&amp;" not in cleaned
+    assert "bold" in cleaned
+    assert "&" in cleaned
