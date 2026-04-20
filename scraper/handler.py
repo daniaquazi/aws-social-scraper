@@ -4,7 +4,7 @@ import logging
 import boto3
 from datetime import datetime
 
-from scraper import get_top_stories, get_story, get_comments
+from scraper import get_top_stories, get_comments
 from parser import parse_story, parse_comments
 
 logger = logging.getLogger()
@@ -29,21 +29,17 @@ def lambda_handler(event, context):
         logger.info("Fetching top %d Hacker News stories", limit)
 
         try:
-            story_ids = get_top_stories(limit=limit)
+            raw_stories = get_top_stories(limit=limit)
             all_stories = []
             all_comments = []
 
-            for story_id in story_ids:
-                raw_story = get_story(story_id)
-                if not raw_story:
-                    continue
-
+            for raw_story in raw_stories:
                 parsed_story = parse_story(raw_story)
                 all_stories.append(parsed_story)
 
-                comment_ids = raw_story.get("comment_ids", [])
-                if comment_ids:
-                    raw_comments = get_comments(comment_ids, limit=10)
+                story_id = raw_story.get("id")
+                if story_id:
+                    raw_comments = get_comments(story_id, limit=10)
                     parsed = parse_comments(raw_comments, story_id)
                     all_comments.extend(parsed)
 
