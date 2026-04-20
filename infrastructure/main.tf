@@ -155,12 +155,6 @@ resource "aws_iam_role_policy" "lambda_policy" {
 # Lambda — scraper function
 # -------------------------------------------------------
 
-data "archive_file" "lambda_zip" {
-  type        = "zip"
-  source_dir  = "${path.module}/../scraper"
-  output_path = "${path.module}/lambda_package.zip"
-}
-
 resource "aws_lambda_function" "scraper" {
   function_name    = "${var.project_name}-scraper-${var.environment}"
   role             = aws_iam_role.lambda_role.arn
