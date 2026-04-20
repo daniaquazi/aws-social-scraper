@@ -7,7 +7,7 @@ import requests
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-BASE_URL = "https://hacker-news.firebaseio.com/v1"
+BASE_URL = "https://hn.algolia.com/api/v1"
 
 HEADERS = {
     "User-Agent": "aws-social-scraper/1.0"
@@ -23,72 +23,59 @@ class ScrapeError(Exception):
 
 def get_top_stories(limit=10):
     """
-    Fetch top story IDs from Hacker News.
-    Returns a list of story IDs.
+    Fetch top stories from Hacker News via Algolia API.
+    Returns a list of story dictionaries directly.
     """
-    url = f"{BASE_URL}/topstories.json"
-    logger.info("Fetching top story IDs from Hacker News")
+    url = f"{BASE_URL}/search?tags=front_page&hitsPerPage={limit}"
+    logger.info("Fetching top %d stories from Hacker News", limit)
 
     data = _get_json(url)
-    story_ids = data[:limit]
+    stories = data.get("hits", [])
 
-    logger.info("Got %d story IDs", len(story_ids))
-    return story_ids
+    results = []
+    for s in stories:
+        results.append({
+            "id": s.get("objectID"),
+            "title": s.get("title"),
+            "url": s.get("url"),
+            "author": s.get("author"),
+            "score": s.get("points", 0),
+            "num_comments": s.get("num_comments", 0),
+            "created_utc": s.get("created_at"),
+            "text": s.get("story_text", "")
+        })
+
+    logger.info("Got %d stories", len(results))
+    return results
 
 
-def get_story(story_id):
+def get_comments(story_id, limit=20):
     """
-    Fetch a single story by ID.
-    Returns story dictionary or None.
-    """
-    url = f"{BASE_URL}/item/{story_id}.json"
-    data = _get_json(url)
-
-    if not data or data.get("type") != "story":
-        return None
-
-    return {
-        "id": data.get("id"),
-        "title": data.get("title"),
-        "url": data.get("url"),
-        "author": data.get("by"),
-        "score": data.get("score", 0),
-        "num_comments": data.get("descendants", 0),
-        "comment_ids": data.get("kids", []),
-        "created_utc": data.get("time"),
-        "text": data.get("text", "")
-    }
-
-
-def get_comments(comment_ids, limit=20):
-    """
-    Fetch comments for a story.
+    Fetch comments for a story via Algolia API.
     Returns list of comment dictionaries.
     """
+    url = f"{BASE_URL}/search?tags=comment,story_{story_id}&hitsPerPage={limit}"
+    logger.info("Fetching comments for story %s", story_id)
+
+    data = _get_json(url)
+    hits = data.get("hits", [])
+
     comments = []
-
-    for comment_id in comment_ids[:limit]:
-        url = f"{BASE_URL}/item/{comment_id}.json"
-        data = _get_json(url)
-
-        if not data:
-            continue
-
-        text = data.get("text", "")
-        if not text or data.get("deleted") or data.get("dead"):
+    for c in hits:
+        text = c.get("comment_text", "")
+        if not text or len(text) < 10:
             continue
 
         comments.append({
-            "id": data.get("id"),
-            "author": data.get("by"),
+            "id": c.get("objectID"),
+            "author": c.get("author"),
             "text": text[:1000],
-            "created_utc": data.get("time"),
-            "parent_id": data.get("parent")
+            "created_utc": c.get("created_at"),
+            "parent_id": c.get("parent_id"),
+            "story_id": story_id
         })
 
-        _random_delay()
-
-    logger.info("Fetched %d comments", len(comments))
+    logger.info("Fetched %d comments for story %s", len(comments), story_id)
     return comments
 
 
@@ -102,6 +89,7 @@ def _get_json(url):
             response = requests.get(url, headers=HEADERS, timeout=30)
 
             if response.status_code == 429:
+                log_rate_limit(url)
                 wait = _backoff(attempt)
                 logger.warning("Rate limited — waiting %ds", wait)
                 time.sleep(wait)
@@ -114,6 +102,7 @@ def _get_json(url):
                 continue
 
             response.raise_for_status()
+            _random_delay()
             return response.json()
 
         except requests.exceptions.Timeout:
